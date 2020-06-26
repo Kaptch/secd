@@ -81,12 +81,12 @@ type SECDMonad = ExceptT SECDError (StateT SECDState IO)
 stdEnv :: E
 stdEnv = Vec.empty
 
-initialState :: C -> SECDState
-initialState code = SECDState { s = stackNew,
-                                e = stdEnv,
-                                c = code,
-                                d = stackNew
-                              }
+initialState :: SECDState
+initialState = SECDState { s = stackNew,
+                           e = stdEnv,
+                           c = Vec.empty,
+                           d = stackNew
+                         }
 
 interpreterCmd :: Command -> SECDMonad ()
 interpreterCmd (LD level var)    = do
