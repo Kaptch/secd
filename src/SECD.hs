@@ -1,3 +1,5 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 module SECD where
 
 import           Control.Monad
@@ -10,6 +12,9 @@ import           Data.Stack           (Stack (..), stackNew, stackPop,
 import           Data.Vector          as Vec (Vector (..), empty, snoc, (!?))
 import           Data.Void            (Void)
 import           Prelude              hiding (lookup, null)
+
+import           Lens.Micro
+import           Lens.Micro.TH
 
 data Value
   = IntValue Int
@@ -61,20 +66,24 @@ data Command
   | DUM
   deriving (Eq, Show)
 
-data SECDState = SECDState
-  {
-    s :: S,
-    e :: E,
-    c :: C,
-    d :: D
-  }
-
 data SECDDump = SECDDump
   {
-    sDump :: S,
-    eDump :: E,
-    cDump :: C
+    _sDump :: S,
+    _eDump :: E,
+    _cDump :: C
   }
+
+makeLenses ''SECDDump
+
+data SECDState = SECDState
+  {
+    _s :: S,
+    _e :: E,
+    _c :: C,
+    _d :: D
+  }
+
+makeLenses ''SECDState
 
 type SECDMonad = ExceptT SECDError (StateT SECDState IO)
 
@@ -82,171 +91,142 @@ stdEnv :: E
 stdEnv = Vec.empty
 
 initialState :: SECDState
-initialState = SECDState { s = stackNew,
-                           e = stdEnv,
-                           c = Vec.empty,
-                           d = stackNew
-                         }
+initialState = SECDState stackNew stdEnv Vec.empty stackNew
 
 interpreterCmd :: Command -> SECDMonad ()
 interpreterCmd (LD level var)    = do
   st <- get
-  case (e st) !? level of
+  case (st ^. e) !? level of
     Nothing -> throwError WrongLevel
     Just (M slice) -> case lookup var slice of
       Nothing  -> throwError UnknownVar
-      Just val -> put $ SECDState { s = stackPush (s st) val,
-                                    e = e st,
-                                    c = c st,
-                                    d = d st
-                                  }
+      Just val -> put $ st & s %~ (flip stackPush val)
     Just _ -> throwError TypeError
 interpreterCmd (LDC val)         = do
   st <- get
-  put $ SECDState { s = stackPush (s st) val,
-                    e = e st,
-                    c = c st,
-                    d = d st
-                  }
+  put $ st & s %~ (flip stackPush val)
 interpreterCmd (LDF code)        = do
   st <- get
-  put $ SECDState { s = stackPush (s st) (FunValue code (e st)),
-                    e = e st,
-                    c = c st,
-                    d = d st
-                  }
+  put $ st & s %~ (flip stackPush (FunValue code (st ^. e)))
 interpreterCmd NIL = do
   st <- get
-  put $ SECDState { s = stackPush (s st) $ ListValue [],
-                    e = e st,
-                    c = c st,
-                    d = d st
-                  }
+  put $ st & s %~ (flip stackPush $ ListValue [])
 interpreterCmd CAR = do
   st <- get
-  case stackPop (s st) of
+  case stackPop (st ^. s) of
     Nothing -> throwError EmptyStack
     Just (stack, ListValue []) -> throwError RuntimeError
     Just (stack, ListValue (x:xs)) ->
-      put $ SECDState { s = stackPush stack x,
-                        e = e st,
-                        c = c st,
-                        d = d st
-                      }
+      put $ st & s .~ (stackPush stack x)
 interpreterCmd CDR = do
   st <- get
-  case stackPop (s st) of
+  case stackPop (st ^. s) of
     Nothing -> throwError EmptyStack
     Just (stack, ListValue []) -> throwError RuntimeError
     Just (stack, ListValue (x:xs)) ->
-      put $ SECDState { s = stackPush stack $ ListValue xs,
-                        e = e st,
-                        c = c st,
-                        d = d st
-                      }
+      put $ st & s .~ (stackPush stack $ ListValue xs)
 interpreterCmd CONS = do
   st <- get
-  case stackPop (s st) of
+  case stackPop (st ^. s) of
     Nothing -> throwError EmptyStack
     Just (stack, ListValue lst1) ->
       case stackPop stack of
         Nothing -> throwError EmptyStack
         Just (stack', ListValue lst2) ->
-          put $ SECDState { s = stackPush stack' $ ListValue $ lst1 ++ lst2,
-                            e = e st,
-                            c = c st,
-                            d = d st
-                          }
+          put $ st & s .~ (stackPush stack' $ ListValue $ lst1 ++ lst2)
         Just (_, _) -> throwError TypeError
     Just (_, _) -> throwError TypeError
 interpreterCmd AP                = do
   st <- get
-  case stackPop (s st) of
+  case stackPop (st ^. s) of
     Nothing -> throwError EmptyStack
     Just (stack, FunValue code context) ->
       case stackPop stack of
         Nothing -> throwError EmptyStack
         Just (stack', ListValue paramlist) ->
-          put $ SECDState { s = stackNew,
-                            e = snoc context (M $ fromList $ zip [1..] $ paramlist),
-                            c = code,
-                            d = stackPush (d st) (SECDDump (s st) (e st) (c st))
-                          }
+          put $ SECDState stackNew
+                          (snoc context (M $ fromList $ zip [1..] $ paramlist))
+                          code
+                          (stackPush (st ^. d) (SECDDump (st ^. s)
+                                                         (st ^. e)
+                                                         (st ^. c)))
         Just (_, _) -> throwError TypeError
     Just (_, _) -> throwError TypeError
 interpreterCmd RET               = do
   st <- get
-  case stackPop (s st) of
+  case stackPop (st ^. s) of
     Nothing -> throwError EmptyStack
-    Just (_, head) -> case stackPop (d st) of
+    Just (_, head) -> case stackPop (st ^. d) of
       Nothing -> throwError NoReturnState
       Just (stack', head') ->
-        put $ SECDState { s = stackPush (sDump head') head,
-                          e = eDump head',
-                          c = cDump head',
-                          d = stack'
-                        }
+        put $ SECDState (stackPush (head' ^. sDump) head)
+                        (head' ^. eDump)
+                        (head' ^. cDump)
+                        stack'
 interpreterCmd (SEL code1 code2) = do
   st <- get
-  case stackPop (s st) of
+  case stackPop (st ^. s) of
     Nothing -> throwError EmptyStack
     Just (stack, head) -> case head of
       BoolValue True ->
-        put $ SECDState { s = stack,
-                          e = e st,
-                          c = code1,
-                          d = stackPush (d st) (SECDDump (s st) (e st) (c st))
-                        }
+        put $ SECDState stack
+                        (st ^. e)
+                        code1
+                        (stackPush (st ^. d) (SECDDump (st ^. s)
+                                                       (st ^. e)
+                                                       (st ^. c)))
       BoolValue False ->
-        put $ SECDState { s = stack,
-                          e = e st,
-                          c = code2,
-                          d = stackPush (d st) (SECDDump (s st) (e st) (c st))
-                        }
+        put $ SECDState stack
+                        (st ^. e)
+                        code2
+                        (stackPush (st ^. d) (SECDDump (st ^. s)
+                                                       (st ^. e)
+                                                       (st ^. c)))
       _ -> throwError TypeError
 interpreterCmd JOIN              = do
   st <- get
-  case stackPop (d st) of
+  case stackPop (st ^. d) of
     Nothing -> throwError NoReturnState
     Just (stack, head) ->
-      put $ SECDState { s = s st,
-                        e = e st,
-                        c = cDump head,
-                        d = stack
-                      }
+      put $ SECDState (st ^. s)
+                      (st ^. e)
+                      (head ^. cDump)
+                      stack
 interpreterCmd RAP               = do
   st <- get
-  case stackPop (s st) of
+  case stackPop (st ^. s) of
     Nothing -> throwError EmptyStack
     Just (stack, FunValue code context) ->
       case stackPop stack of
         Nothing -> throwError EmptyStack
         Just (stack', ListValue paramlist) ->
-          case (e st) !? (length (e st) - 1) of
+          case (st ^. e) !? (length (st ^. e) - 1) of
             Nothing -> throwError EmptyContext
             Just Omega ->
-              put $ SECDState { s = stackNew,
-                                e = fmap (let p Omega = True
-                                              p _     = False
-                                          in  \x -> if p x
-                                            then (M $ fromList $ zip [1..] $ paramlist)
-                                            else x)
-                                    context,
-                                c = code,
-                                d = stackPush (d st) (SECDDump stack (e st) (c st))
-                              }
+              put $ SECDState stackNew
+                              (fmap (let p Omega = True
+                                         p _     = False
+                                     in  \x -> if p x
+                                       then (M $ fromList $ zip [1..] $ paramlist)
+                                       else x)
+                                    context)
+                              code
+                              (stackPush (st ^. d) (SECDDump stack (st ^. e) (st ^. c)))
             Just _ -> throwError TypeError
         Just (_, _) -> throwError TypeError
     Just (_, _) -> throwError TypeError
 interpreterCmd DUM               = do
   st <- get
-  put $ SECDState { s = s st,
-                    e = snoc (e st) Omega,
-                    c = c st,
-                    d = d st
-                  }
+  put $ st & e %~ (flip snoc Omega)
 
-interpreter :: SECDMonad ()
-interpreter = do
+evalNextCmd :: SECDMonad ()
+evalNextCmd = do
   st <- get
-  mapM_ interpreterCmd (c st)
+  case (st ^. c) !? 0 of
+    Nothing  -> return ()
+    Just cmd -> interpreterCmd cmd
+
+evalCmds :: SECDMonad ()
+evalCmds = do
+  st <- get
+  mapM_ interpreterCmd (st ^. c)
