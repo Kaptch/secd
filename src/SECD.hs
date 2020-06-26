@@ -72,6 +72,7 @@ data SECDDump = SECDDump
     _eDump :: E,
     _cDump :: C
   }
+  deriving (Show)
 
 makeLenses ''SECDDump
 
@@ -82,6 +83,7 @@ data SECDState = SECDState
     _c :: C,
     _d :: D
   }
+  deriving (Show)
 
 makeLenses ''SECDState
 
