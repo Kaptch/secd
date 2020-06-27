@@ -1,0 +1,35 @@
+entrypoints Command, ListCommand ;
+
+IntValue. Value ::= Integer ;
+BoolTrueValue. Value ::= "T" ;
+BoolFalseValue. Value ::= "F" ;
+DoubleValue. Value ::= Double ; 
+FunValue. Value ::= Code Context ;
+ListValue. Value ::= "[" [Value] "]" ;
+
+ContextE. Context ::= "[" [ContextEntry] "]" ;
+CodeE. Code ::= "[" [Command] "]" ;
+
+M. ContextEntry ::= "{" [ContextPair] "}" ;
+Omega. ContextEntry ::= "Omega" ;
+
+ContextPairE. ContextPair ::= "(" Integer "," Value ")" ;
+
+LD. Command ::= "LD" Integer Integer ;
+LDC. Command ::= "LDC" Value ;
+LDF. Command ::= "LDF" Code ;
+NIL. Command ::= "NIL" ;
+CAR. Command ::= "CAR" ;
+CDR. Command ::= "CDR" ;
+CONS. Command ::= "CONS" ;
+AP. Command ::= "AP" ;
+RET. Command ::= "RET" ;
+SEL. Command ::= "SEL" Code Code ;
+JOIN. Command ::= "JOIN" ;
+RAP. Command ::= "RAP" ;
+DUM. Command ::= "DUM" ;
+
+separator ContextPair "" ;
+separator Command "" ;
+separator ContextEntry "" ;
+separator Value "," ;

@@ -2,6 +2,7 @@
 
 module SECD where
 
+import qualified AbsSECD              as I
 import           Control.Monad
 import           Control.Monad.Except
 import           Control.Monad.State
@@ -9,12 +10,15 @@ import           Data.Map.Strict      as Map (Map (..), empty, fromList, lookup,
                                               null)
 import           Data.Stack           (Stack (..), stackNew, stackPop,
                                        stackPush)
-import           Data.Vector          as Vec (Vector (..), empty, snoc, (!?))
+import           Data.Vector          as Vec (Vector (..), empty, fromList,
+                                              snoc, (!?))
 import           Data.Void            (Void)
-import           Prelude              hiding (lookup, null)
-
+import           ErrM
 import           Lens.Micro
 import           Lens.Micro.TH
+import           LexSECD              (tokens)
+import           ParSECD              (pCommand, pListCommand)
+import           Prelude              hiding (lookup, null)
 
 data Value
   = IntValue Int
@@ -89,6 +93,42 @@ makeLenses ''SECDState
 
 type SECDMonad = ExceptT SECDError (StateT SECDState IO)
 
+iCodeToCode :: I.Code -> Code
+iCodeToCode (I.CodeE list) = Vec.fromList (map iCommandToCommand list)
+
+iValueToValue :: I.Value -> Value
+iValueToValue (I.IntValue int) = IntValue (fromIntegral int)
+iValueToValue I.BoolTrueValue = BoolValue True
+iValueToValue I.BoolFalseValue = BoolValue False
+iValueToValue (I.DoubleValue dbl) = DoubleValue dbl
+iValueToValue (I.FunValue code context) = FunValue (iCodeToCode code) (iContextToContext context)
+iValueToValue (I.ListValue lst) = ListValue (map iValueToValue lst)
+
+iContextToContext :: I.Context -> Context
+iContextToContext (I.ContextE lst) = Vec.fromList (map iContextEntryToContextEntry lst)
+
+iContextEntryToContextEntry :: I.ContextEntry -> ContextEntry
+iContextEntryToContextEntry I.Omega = Omega
+iContextEntryToContextEntry (I.M lst) = M (Map.fromList (map iContextPairToContextPair lst))
+
+iContextPairToContextPair :: I.ContextPair -> (Var, Value)
+iContextPairToContextPair (I.ContextPairE int val) = (fromIntegral int, iValueToValue val)
+
+iCommandToCommand :: I.Command -> Command
+iCommandToCommand (I.LD int1 int2)    = LD (fromIntegral int1) (fromIntegral int2)
+iCommandToCommand (I.LDC val)         = undefined
+iCommandToCommand (I.LDF code)        = LDF (iCodeToCode code)
+iCommandToCommand I.NIL               = NIL
+iCommandToCommand I.CAR               = CAR
+iCommandToCommand I.CDR               = CDR
+iCommandToCommand I.CONS              = CONS
+iCommandToCommand I.AP                = AP
+iCommandToCommand I.RET               = RET
+iCommandToCommand (I.SEL code1 code2) = SEL (iCodeToCode code1) (iCodeToCode code2)
+iCommandToCommand I.JOIN              = JOIN
+iCommandToCommand I.RAP               = RAP
+iCommandToCommand I.DUM               = DUM
+
 stdEnv :: E
 stdEnv = Vec.empty
 
@@ -147,7 +187,7 @@ interpreterCmd AP                = do
         Nothing -> throwError EmptyStack
         Just (stack', ListValue paramlist) ->
           put $ SECDState stackNew
-                          (snoc context (M $ fromList $ zip [1..] $ paramlist))
+                          (snoc context (M $ Map.fromList $ zip [1..] $ paramlist))
                           code
                           (stackPush (st ^. d) (SECDDump (st ^. s)
                                                          (st ^. e)
@@ -209,7 +249,7 @@ interpreterCmd RAP               = do
                               (fmap (let p Omega = True
                                          p _     = False
                                      in  \x -> if p x
-                                       then (M $ fromList $ zip [1..] $ paramlist)
+                                       then (M $ Map.fromList $ zip [1..] $ paramlist)
                                        else x)
                                     context)
                               code
@@ -232,3 +272,9 @@ evalCmds :: SECDMonad ()
 evalCmds = do
   st <- get
   mapM_ interpreterCmd (st ^. c)
+
+parseCmd :: String -> Err Command
+parseCmd str = fmap iCommandToCommand $ pCommand $ tokens str
+
+parseCmds :: String -> Err [Command]
+parseCmds str = fmap (map iCommandToCommand) $ pListCommand $ tokens str
