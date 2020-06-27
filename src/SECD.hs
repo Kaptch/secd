@@ -11,7 +11,7 @@ import           Data.Map.Strict      as Map (Map (..), empty, fromList, lookup,
 import           Data.Stack           (Stack (..), stackNew, stackPop,
                                        stackPush)
 import           Data.Vector          as Vec (Vector (..), empty, fromList,
-                                              snoc, (!?))
+                                              null, snoc, tail, (!?))
 import           Data.Void            (Void)
 import           ErrM
 import           Lens.Micro
@@ -266,12 +266,16 @@ evalNextCmd = do
   st <- get
   case (st ^. c) !? 0 of
     Nothing  -> return ()
-    Just cmd -> interpreterCmd cmd
+    Just cmd -> do
+      put $ (st & c %~ Vec.tail)
+      interpreterCmd cmd
 
 evalCmds :: SECDMonad ()
 evalCmds = do
   st <- get
-  mapM_ interpreterCmd (st ^. c)
+  if Vec.null (st ^. c)
+    then return ()
+    else evalNextCmd >> evalCmds
 
 parseCmd :: String -> Err Command
 parseCmd str = fmap iCommandToCommand $ pCommand $ tokens str
